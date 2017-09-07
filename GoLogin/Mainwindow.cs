@@ -12,12 +12,14 @@ namespace GoLogin
 {
     public partial class MainWindow : Form
     {
+        private NetOperation mOperation;
         public MainWindow()
         {
             InitializeComponent();
+            mOperation = new NetOperation();
             mOperation.init();
         }
-        NetOperation mOperation;
+
         private void labelUrl_LinkClicked(object sender, LinkLabelLinkClickedEventArgs e)
         {
 
@@ -31,6 +33,16 @@ namespace GoLogin
             else
             {
                 tbPassword.PasswordChar = '\0';
+            }
+        }
+
+        private void btnLogin_Click(object sender, EventArgs e)
+        {
+            if (!mOperation.systemOnline())
+                mOperation.startLogin(tbUsername.Text, tbPassword.Text);
+            else
+            {
+                mOperation.startLogout();
             }
         }
     }
