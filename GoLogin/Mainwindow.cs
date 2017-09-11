@@ -18,6 +18,7 @@ namespace GoLogin
             InitializeComponent();
             mOperation = new NetOperation();
             mOperation.init();
+            richTextBox1.Text = richTextBox1.Text + "初始化结束!";
         }
 
         private void labelUrl_LinkClicked(object sender, LinkLabelLinkClickedEventArgs e)
@@ -43,6 +44,22 @@ namespace GoLogin
             else
             {
                 mOperation.startLogout();
+            }
+        }
+        private void onTimerCheck(object sender, EventArgs e)
+        {
+            string result = mOperation.updateTimer();
+            if (result != null)
+            {
+                richTextBox1.Text = richTextBox1.Text + result + "\n";
+            }
+        }
+        private void onSlowTimerCheck(object sender, EventArgs e)
+        {
+            string result = mOperation.updateSlowTimer();
+            if (result != null)
+            {
+                richTextBox1.Text = richTextBox1.Text + result + "\n";
             }
         }
     }
