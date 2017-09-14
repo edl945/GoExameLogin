@@ -7,7 +7,8 @@ using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;  
 using System.DirectoryServices.Protocols;  
 using System.ServiceModel.Security;  
-using System.Net;  
+using System.Net;
+using System.Net.Cache;
 using System.IO;  
 using System.IO.Compression;  
 using System.Text.RegularExpressions;
@@ -26,18 +27,18 @@ namespace GoLogin
 {    
     public class NetOperation
     {
-        static private CookieCollection loginCookies;
-        static private string session;
-        static private HttpWebRequest request;
+        static private CookieCollection mLoginCookies;
+        static private string mSession;
+        static private HttpWebRequest mRequest;
 
         static private StepType currentStep = StepType.stepIdle;
         static private StepType backupStep = StepType.stepIdle;
 
         public void init()
         {
-            loginCookies = null;
-            session = "";
-            request = null;
+            mLoginCookies = null;
+            mSession = "";
+            mRequest = null;
         }
 
         public bool systemOnline()
@@ -84,24 +85,24 @@ namespace GoLogin
             long timeStamp = currentTimeStamp();
             string formatedTime = DateTime.Now.ToString("yyyy年MM月dd日 HH:mm:ss");
 
-            session = GetCookieValue(cookiestring);
-            ret.Add(new Cookie("ASP.NET_SessionId", session, "/", "www.shweiqi.org"));
+            mSession = GetCookieValue(cookiestring);
+            ret.Add(new Cookie("ASP.NET_SessionId", mSession, "/", "www.shweiqi.org"));
             ret.Add(new Cookie("Hm_lvt_cea027ed183c3538b8429f1f87a894c8", timeStamp.ToString(), "/", ".shweiqi.org"));
-            ret.Add(new Cookie("Hm_lpvt_cea027ed183c3538b8429f1f87a894c8", timeStamp.ToString(), "/", ".shweiqi.org"));
+            ret.Add(new Cookie("Hm_lpvt_cea027ed183c3538b8429f1f87a894c8", (timeStamp+2000).ToString(), "/", ".shweiqi.org"));
            // ret.Add(new Cookie("login_time", HttpUtility.UrlEncode(formatedTime, Encoding.GetEncoding("UTF-8")), "/", ".shweiqi.org"));
             return ret;
         }
 
         private List<string> GetElementContent(string url, string elementName, string subElement)
         {
-            request = (HttpWebRequest)WebRequest.Create(url);
-            request.Method = "GET";
-            request.Referer = "http://www.shweiqi.org/App/Center/ExamRegistration/ExamRegistrationList.aspx?app_id=102&";
-            request.Accept = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8";
-            request.UserAgent = "Mozilla/5.0 (Windows NT 10.0; WOW64; rv:55.0) Gecko/20100101 Firefox/55.0";
-            request.KeepAlive = true;
+            mRequest = (HttpWebRequest)WebRequest.Create(url);
+            mRequest.Method = "GET";
+            mRequest.Referer = "http://www.shweiqi.org/App/Center/ExamRegistration/ExamRegistrationList.aspx?app_id=102&";
+            mRequest.Accept = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8";
+            mRequest.UserAgent = "Mozilla/5.0 (Windows NT 10.0; WOW64; rv:55.0) Gecko/20100101 Firefox/55.0";
+            mRequest.KeepAlive = true;
          
-            HttpWebResponse response = (HttpWebResponse)request.GetResponse();
+            HttpWebResponse response = (HttpWebResponse)mRequest.GetResponse();
             Stream responseStream = response.GetResponseStream();
             StreamReader reader = new StreamReader(responseStream, Encoding.UTF8);
             string content = reader.ReadToEnd();
@@ -109,7 +110,7 @@ namespace GoLogin
             responseStream.Close();
 
             string cookie = response.Headers.Get("Set-Cookie");
-            loginCookies = genAccessCookies(cookie);
+            mLoginCookies = genAccessCookies(cookie);
 
             StringBuilder regexStr = new StringBuilder("(?is)<");
             regexStr.Append(elementName).Append("[^>]*?").Append(subElement).Append(@"=(['""\s]?)([^'""\s]+)\1[^>]*?>");
@@ -133,7 +134,7 @@ namespace GoLogin
 
         public bool loginCookiesNotContain(string key)
         {
-            foreach(Cookie ck in loginCookies)
+            foreach(Cookie ck in mLoginCookies)
             {
                 if (ck.Name == key)
                     return false;
@@ -141,10 +142,11 @@ namespace GoLogin
             return true;
         }
 
+        //登陆请求
         public bool startLogin(string userName, string password)
         {
             string loginUrl = "http://www.shweiqi.org/App/Auth/Login.aspx?app_id=1";
-            string refUrl = loginUrl;// +rdValue;
+            string refUrl = "http://www.shweiqi.org";
 
             List<string> elementContent = GetElementContent(loginUrl, "input", "value");            
             string __VIEWSTATE = elementContent[0];
@@ -170,7 +172,7 @@ namespace GoLogin
 
             UrlEncodeParams(parameters);
 
-            HttpWebResponse response = HttpWebResponseUtility.CreatePostHttpResponse(loginUrl, refUrl, parameters, null, null, "application/x-www-form-urlencoded", loginCookies, "POST", false);
+            HttpWebResponse response = HttpWebResponseUtility.GetHttpWebResponseNoRedirect(loginUrl, refUrl, parameters, null, null, "application/x-www-form-urlencoded", mLoginCookies, "POST", false);
 
             string logincookies = HttpWebResponseUtility.request.Headers.Get("Cookie");
 
@@ -191,20 +193,16 @@ namespace GoLogin
 
                         if(loginCookiesNotContain(key))
                         {
-                            loginCookies.Add(new Cookie(key, value, "/", "www.shweiqi.org"));
+                            mLoginCookies.Add(new Cookie(key, value, "/", "www.shweiqi.org"));
                         }
                     }
                 }
             }
+           
+            if (response.StatusCode == HttpStatusCode.Found)//302
+                Console.WriteLine("HttpStatusCode.Found");
 
-            /*
-            Stream responseStream = response.GetResponseStream();
-            StreamReader reader = new StreamReader(responseStream, Encoding.UTF8);
-            string content = reader.ReadToEnd();
-            reader.Close();
-            responseStream.Close();
-            */  
-
+            response.Close();
             if(true)
             {
                 //login ok
@@ -214,23 +212,25 @@ namespace GoLogin
             return true;
         }
 
+        //登陆成功后先来拉取一下数据 step 2
         public void getExamListUrl()
         {
             string loginUrl = "http://www.shweiqi.org/App/Center/Default.aspx?app_id=102&";
-            string refUrl = "http://www.shweiqi.org/App/Auth/Login.aspx?app_id=1";
+            string refUrl = "http://www.shweiqi.org/";
             Dictionary<string, string> parameters = new Dictionary<string, string>();
-            HttpWebResponse response = HttpWebResponseUtility.CreatePostHttpResponse(loginUrl, refUrl, parameters, null, null, "application/x-www-form-urlencoded", loginCookies, "GET", false);
-
+            HttpWebResponse response = HttpWebResponseUtility.GetHttpWebResponseNoRedirect(loginUrl, refUrl, parameters, null, null, "application/x-www-form-urlencoded", mLoginCookies, "GET", false);
+            response.Close();
             currentStep = StepType.stepLoginedRedirToActivityInterface;           
         }
 
+        //step 3
         public void getExamList()
         {
             string loginUrl = "http://www.shweiqi.org/App/Center/ExamRegistration/ExamRegistrationList.aspx?app_id=102&";
-            string refUrl = "http://www.shweiqi.org/App/Auth/Login.aspx?app_id=1";
+            string refUrl = "http://www.shweiqi.org/";
             Dictionary<string, string> parameters = new Dictionary<string, string>();
-            HttpWebResponse response = HttpWebResponseUtility.CreatePostHttpResponse(loginUrl, refUrl, parameters, null, null, null, loginCookies, "GET", false);
-
+            HttpWebResponse response = HttpWebResponseUtility.GetHttpWebResponseNoRedirect(loginUrl, refUrl, parameters, null, null, null, mLoginCookies, "GET", false);
+            response.Close();
             currentStep = StepType.stepGetAndSelActivity;
         }
 
@@ -242,13 +242,14 @@ namespace GoLogin
             parameters.Add("pagerJson", "{ \"SortColumn\": \"\", \"SortMode\":\"asc\", \"PageSize\": \"2147483647\", \"PageNum\":\"1\"}");
             parameters.Add("searchCondtionJson", "{\"dataRange$ignore_search\":\"includeHistory\"}");
             parameters.Add("AjaxMethod", "Search");
-            HttpWebResponse response = HttpWebResponseUtility.CreatePostHttpResponse(loginUrl, refUrl, parameters, null, null, "application/x-www-form-urlencoded; charset=UTF-8", loginCookies, "POST", true);
+            HttpWebResponse response = HttpWebResponseUtility.GetHttpWebResponseNoRedirect(loginUrl, refUrl, parameters, null, null, "application/x-www-form-urlencoded; charset=UTF-8", mLoginCookies, "POST", true);
 
             Stream responseStream = response.GetResponseStream();
             StreamReader reader = new StreamReader(responseStream, Encoding.UTF8);
             string content = reader.ReadToEnd();
             reader.Close();
-            responseStream.Close();           
+            responseStream.Close();
+            response.Close();
         }
         
         public bool trySelExam()
@@ -256,12 +257,12 @@ namespace GoLogin
             bool ret = false;
 
             string loginUrl = "http://www.shweiqi.org/App/Center/ExamRegistration/ExamRegistrationAjax.aspx?app_id=102&&ajaxtime=" + currentTimeStamp().ToString();
-            string refUrl = "http://www.shweiqi.org/App/Center/ExamRegistration/ExamRegistrationList.aspx?app_id=102&";
+            string refUrl = "http://www.shweiqi.org/";
             Dictionary<string, string> parameters = new Dictionary<string, string>();
             parameters.Add("pagerJson", "{ \"SortColumn\": \"\", \"SortMode\":\"asc\", \"PageSize\": \"2147483647\", \"PageNum\":\"1\"}");
             parameters.Add("searchCondtionJson", "{\"dataRange$ignore_search\":\"includeHistory\"}");
             parameters.Add("AjaxMethod", "Search");
-            HttpWebResponse response = HttpWebResponseUtility.CreatePostHttpResponse(loginUrl, refUrl, parameters, null, null, "application/x-www-form-urlencoded", loginCookies, "GET", false);
+            HttpWebResponse response = HttpWebResponseUtility.GetHttpWebResponseNoRedirect(loginUrl, refUrl, parameters, null, null, "application/x-www-form-urlencoded", mLoginCookies, "GET", false);
 
             Stream responseStream = response.GetResponseStream();
             StreamReader reader = new StreamReader(responseStream, Encoding.UTF8);
@@ -301,9 +302,10 @@ namespace GoLogin
                         return "\n获取Session等数据";
                     case StepType.stepLoginedRedirToActivityInterface:
                         getExamList();
-                        return "\n获取赛事信息";
+                        return "获取赛事信息";
                     case StepType.stepGetAndSelActivity:
-                        return null;
+                        getExamList("myExam");
+                        return "\n获取已参加过的赛事";
                     case StepType.stepSignupActivity:
                         return null;
                 }
@@ -339,18 +341,8 @@ namespace GoLogin
     /// </summary>  
     public class HttpWebResponseUtility
     {
-        static public HttpWebRequest request;
-        /// <summary>  
-        /// 创建POST方式的HTTP请求  
-        /// </summary>  
-        /// <param name="url">请求的URL</param>  
-        /// <param name="parameters">随同请求POST的参数名称及参数值字典</param>  
-        /// <param name="timeout">请求的超时时间</param>  
-        /// <param name="userAgent">请求的客户端浏览器信息，可以为空</param>  
-        /// <param name="requestEncoding">发送HTTP请求时所用的编码</param>  
-        /// <param name="cookies">随同HTTP请求发送的Cookie信息，如果不需要身份验证可以为空</param>  
-        /// <returns></returns>  
-        public static HttpWebResponse CreatePostHttpResponse(string url, string refUrl, IDictionary<string, string> parameters, 
+        static public HttpWebRequest request;     
+        public static HttpWebResponse GetHttpWebResponseNoRedirect(string url, string refUrl, IDictionary<string, string> parameters, 
             int? timeout, string userAgent, string ContentType, CookieCollection cookies, string method, bool getXml)
         {
             Encoding requestEncoding = Encoding.GetEncoding("UTF-8");
@@ -371,20 +363,6 @@ namespace GoLogin
                 request = WebRequest.Create(url) as HttpWebRequest;
             }
 
-            //string cookiestring = "";
-            //if (cookies != null)
-            //{
-            //    int i = 0;
-            //    foreach( Cookie ck in cookies)
-            //    {
-            //        if (i != cookies.Count - 1)
-            //            cookiestring += ck.Name + "=" + ck.Value + "; ";
-            //        else
-            //            cookiestring += ck.Name + "=" + ck.Value;
-            //        i++;
-            //    }
-            //}
-
             if (method == null)
                 request.Method = "POST";
             else
@@ -397,20 +375,23 @@ namespace GoLogin
                 request.Accept = "text/javascript, text/html, application/xml, text/xml, */*";
                 request.Headers.Add("X-Requested-With", "XMLHttpRequest");
                 request.Headers.Add("X-Prototype-Version", "1.7.2");
+                request.AllowAutoRedirect = false;
+
             }
             else
             {
+                request.AllowAutoRedirect = true;
                 request.Accept = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8";
-
             }
             request.Headers.Add("Accept-Encoding", "gzip,deflate");
             request.Headers.Add("Upgrade-Insecure-Requests", "1");
             request.Headers.Add("Accept-Language","zh-CN,zh;q=0.8,en-US;q=0.5,en;q=0.3");
             request.ContentType = ContentType;
+            request.Timeout = 20000;
 
 
-            //request.ContentLength = 818;
-
+            HttpRequestCachePolicy noCachePolicy = new HttpRequestCachePolicy(HttpRequestCacheLevel.NoCacheNoStore);
+            request.CachePolicy = noCachePolicy;
 
             if (!string.IsNullOrEmpty(userAgent))
             {
@@ -423,11 +404,6 @@ namespace GoLogin
 
             if (!string.IsNullOrEmpty(refUrl))
                 request.Referer = refUrl;
-
-            if (timeout.HasValue)
-            {
-                request.Timeout = timeout.Value;
-            }
 
             if (cookies != null)
             {
@@ -458,12 +434,24 @@ namespace GoLogin
                     stream.Write(data, 0, data.Length);
                 }
             }
-            HttpWebResponse hwr = request.GetResponse() as HttpWebResponse;
+            HttpWebResponse hwr = null;
+            try
+            {
+                hwr = request.GetResponse() as HttpWebResponse;
+                if (hwr.StatusCode == HttpStatusCode.Found)//302
+                    Console.WriteLine("HttpStatusCode.Found");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine(ex.GetType().FullName);
+                Console.WriteLine(ex.GetBaseException().ToString());
+            }
 
             // Displays each header and it's key associated with the response.
             for (int i = 0; i < request.Headers.Count; ++i)
-                Console.WriteLine("\nHeader Name:{0}, Value :{1}", request.Headers.Keys[i], request.Headers[i]); 
+                Console.WriteLine("\nHeader Name:{0}, Value :{1}", request.Headers.Keys[i], request.Headers[i]);
 
+            request.Abort();
             return hwr;
         }
 
